@@ -1,0 +1,11 @@
+{
+  "ocr_confidence_score": 0.92,
+  "raw_employment_sinhala": "ස්ථිර රැකියාව - ABC සමාගම",
+  "raw_monthly_income": 600000.0,
+  "raw_loan_purpose_sinhala": "නිවස අලුත්වැඩියා කිරීම",
+  "requested_loan_amount": 2500000.0,
+  "crib_score": 720,
+  "existing_debts": 15000.0,
+  "request_id": "1001",
+  "received_at": "2026-05-30T10:20:00Z"
+}
