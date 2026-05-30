@@ -1,11 +1,27 @@
 import uuid
 import json
-from fastapi import FastAPI, HTTPException
+try:
+    from fastapi import FastAPI, HTTPException
+except ImportError:
+    FastAPI = None
+    class HTTPException(Exception):
+        def __init__(self, status_code: int, detail: str):
+            self.status_code = status_code
+            self.detail = detail
 import time
 import logging
 import re
 from typing import Dict, Any, List
-from pydantic import BaseModel, Field
+try:
+    from pydantic import BaseModel, Field
+except ImportError:
+    from dataclasses import dataclass, field
+    BaseModel = dataclass
+    def Field(default, **kwargs):
+        return field(default=default, metadata=kwargs)
+
+# FastAPI app
+app = FastAPI() if FastAPI is not None else None
 
 # --- LAYER 1: PRODUCTION LOGGING & GOVERNANCE ---
 class JSONComplianceFormatter(logging.Formatter):
@@ -21,12 +37,15 @@ class JSONComplianceFormatter(logging.Formatter):
         }
         return json.dumps(log_record)
     
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
-    logger = logging.getLogger()
-    handler = logging.StreamHandler()
-    handler.setFormatter(JSONComplianceFormatter())
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
+
+# Configure root logger with JSONComplianceFormatter after the class is defined
+
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+logger = logging.getLogger()
+handler = logging.StreamHandler()
+handler.setFormatter(JSONComplianceFormatter())
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 
 # --- LAYER 2: MULTILINGUAL BANKING LEXICON ---
@@ -73,7 +92,7 @@ class FinancialFeatureExtractionEngine:
             "crib_score": payload.crib_score,
             "existing_debts": self.clean_currency(str(payload.existing_debts)),
             "total_monthly_obligations": self.clean_currency(str(payload.existing_debts + payload.requested_loan_amount / 12)),
-            "dti_ratio = total_monthly_commitments / monthly_income": (payload.existing_debts + payload.requested_loan_amount / 12) / self.clean_currency(str(payload.raw_monthly_income)) if self.clean_currency(str(payload.raw_monthly_income)) > 0 else 1.0
+            "dti_ratio": (payload.existing_debts + payload.requested_loan_amount / 12) / self.clean_currency(str(payload.raw_monthly_income)) if self.clean_currency(str(payload.raw_monthly_income)) > 0 else 1.0
         }
         return features
 
@@ -106,7 +125,11 @@ class DterministicBankingRulesEngine:
 # --- LAYER 6: MULTI-AGENT STATE MACHINE RUNTIME ---
 class UnderwritingOrchestrator:
     def execute_pipeline(self, payload: OCRInboundPayload, tx_id: str) -> Dict[str, Any]:
-        extra = {"tx_id": tx_id, "request_id": payload.request_id}
+        extra = {
+            "tx_id": tx_id,
+            "request_id": payload.request_id,
+            "start_time": time.time(),
+        }
         logging.info(f"Starting underwriting pipeline for transaction {tx_id}")
 
         # 1. Validate OCR confidence        
@@ -121,7 +144,7 @@ class UnderwritingOrchestrator:
 
         # 3. Translation validation        
         if translated_employment == "local_term_not_found":
-            logging.warning(f"Failed to translate) employment status for transaction {tx_id}")
+            logging.warning(f"Failed to translate employment status for transaction {tx_id}")
             return self.handle_low_confidence(payload, tx_id, "TRANSLATION_FAILURE", "Failed to translate employment status from OCR data.")
         if translated_loan_purpose == "local_term_not_found":
             logging.warning(f"Failed to translate loan purpose for transaction {tx_id}")
@@ -133,11 +156,11 @@ class UnderwritingOrchestrator:
         
         # 5: Apply deterministic rules
         rules_engine = DterministicBankingRulesEngine()
-        decision_result = rules_engine.apply_rules(features)
+        decision_result = rules_engine.apply_rules(financial_features)
         logging.info(f"Decision result for transaction {tx_id}: {decision_result}")
 
         # 6. Dynamic selective RAG retrieval + Long context reasoning
-        # Contecxt is dynamically curated via semantic embedding queries rather than risky raw folder dumps.
+        # Context is dynamically curated via semantic embedding queries rather than risky raw folder dumps.
         curated_context_summary = (
             f"Applicant exhibits clean credit indicators (CRIB score: {payload.crib_score}, DTI ratio: {financial_features['dti_ratio']:.2f}), "
             f"Normalized lexicon status mapped to standard low-risk categories, and no red flags in employment or loan purpose."
@@ -146,71 +169,59 @@ class UnderwritingOrchestrator:
 
         # Final Decision Logic
         if payload.crib_score >= 700 and financial_features["dti_ratio"] < 0.3:
-            decision_result["decision"] = "APPROVE" 
+            decision_result["decision"] = "APPROVE"
             rationale = "Applicant meets all criteria for approval based on strong credit indicators and low risk profile."
+            return self._compile_approval_payload(tx_id, payload, financial_features, decision_result, curated_context_summary, rationale)
         else:
-            decision_result["decision"] = "ESCALATED TO HUMAN REVIEW",
+            decision_result["decision"] = "ESCALATED TO HUMAN REVIEW"
             return self._compile_escalation_payload(tx_id, payload, financial_features, decision_result, curated_context_summary)
 
-        
+    def handle_low_confidence(self, payload: OCRInboundPayload, tx_id: str, reason_code: str, reason_message: str) -> Dict[str, Any]:
+        logging.warning(f"Handling low confidence case for transaction {tx_id}: {reason_message}")
         return {
+            "transaction_id": tx_id,
+            "decision_result": {
+                "decision": "ESCALATED TO HUMAN REVIEW",
+                "reasons": [reason_message]
+            },
+            "timestamp": time.time(),
+            "request_id": payload.request_id,
+        }
+
+    def _compile_escalation_payload(self, tx_id: str, payload: OCRInboundPayload, features: Dict[str, Any], decision_result: Dict[str, Any], curated_context_summary: str) -> Dict[str, Any]:
+        escalation_payload = {
+            "transaction_id": tx_id,
+            "features": features,
+            "decision_result": decision_result,
+            "curated_context_summary": curated_context_summary,
+            "timestamp": time.time(),
+            "request_id": payload.request_id,
+        }
+        logging.info(f"Compiled escalation payload for transaction {tx_id}: {escalation_payload}")
+        return escalation_payload
+
+    def _compile_approval_payload(self, tx_id: str, payload: OCRInboundPayload, features: Dict[str, Any], decision_result: Dict[str, Any], curated_context_summary: str, rationale: str) -> Dict[str, Any]:
+        approval_payload = {
             "transaction_id": tx_id,
             "features": features,
             "decision_result": decision_result,
             "curated_context_summary": curated_context_summary,
             "rationale": rationale,
             "timestamp": time.time(),
-            "processing_time_seconds": time.time() - extra["start_time"],
             "request_id": payload.request_id,
         }
-    
-        def handle_low_confidence(self, payload: OCRInboundPayload, tx_id: str, reason_code: str, reason_message: str) -> Dict[str, Any]:
-            logging.warning(f"Handling low confidence case for transaction {tx_id}: {reason_message}")
-            return {
-                "transaction_id": tx_id,
-                "decision_result": {
-                    "decision": "ESCALATED TO HUMAN REVIEW",
-                    "reasons": [reason_message]
-                },
-                "timestamp": time.time(),
-                "request_id": payload.request_id,
-            }
-        
-        def _compile_escalation_payload(self, tx_id: str, payload: OCRInboundPayload, features: Dict[str, Any], decision_result: Dict[str, Any], curated_context_summary: str) -> Dict[str, Any]:
-            escalation_payload = {
-                "transaction_id": tx_id,
-                "features": features,
-                "decision_result": decision_result,
-                "curated_context_summary": curated_context_summary,
-                "timestamp": time.time(),
-                "request_id": payload.request_id,
-            }
-            logging.info(f"Compiled escalation payload for transaction {tx_id}: {escalation_payload}")
-            return escalation_payload
-        
-        def _compile_approval_payload(self, tx_id: str, payload: OCRInboundPayload, features: Dict[str, Any], decision_result: Dict[str, Any], curated_context_summary: str, rationale: str) -> Dict[str, Any]:
-            approval_payload = {
-                "transaction_id": tx_id,
-                "features": features,
-                "decision_result": decision_result,
-                "curated_context_summary": curated_context_summary,
-                "rationale": rationale,
-                "timestamp": time.time(),
-                "request_id": payload.request_id,
-            }
-            logging.info(f"Compiled approval payload for transaction {tx_id}: {approval_payload}")
-            return approval_payload
-        
-        orchestrator = UnderwritingOrchestrator()
-    
-    
+        logging.info(f"Compiled approval payload for transaction {tx_id}: {approval_payload}")
+        return approval_payload
+
+
+orchestrator = UnderwritingOrchestrator()
 
 # --- LAYER 7: FASTAPI API ENDPOINTS ---
 @app.post("/api/v1/underwrite")
 def run_underwriting_decision(payload: OCRInboundPayload):
-    tx_id = f"tx_2026_{uuid.uuid4().hex[:8 ]}"
+    tx_id = f"tx_2026_{uuid.uuid4().hex[:8]}"
     try:
-        return orchestrator.execute_pipline(payload, tx_id)
+        return orchestrator.execute_pipeline(payload, tx_id)
     except Exception as e:
         logging.error(f"Error processing transaction {tx_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
