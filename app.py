@@ -98,14 +98,21 @@ from prometheus_fastapi_instrumentator import Instrumentator
 class BankingLexicon:
     def __init__(self):
         self.lexicon = {
-            "ස්ථිර රැකියාව - ABC සමාගම": "PERMANENT_EMPLOYMENT_ABC_COMPANY",
-            "නිවස අලුත්වැඩියා කිරීම": "HOME_RENOVATION"
+            "ස්ථිර රැකියාව": "PERMANENT_EMPLOYMENT_ABC_COMPANY",
+            "නිවස": "HOME_RENOVATION"
         }
 
     def translate_term(self, local_term: str) -> str:
         if not local_term:
             return "local_term_not_found"
-        return self.lexicon.get(local_term.strip(), "local_term_not_found")
+        
+        # Look for keyword substrings to avoid terminal encoding traps
+        cleaned_term = local_term.strip()
+        for key, value in self.lexicon.items():
+            if key in cleaned_term:
+                return value
+                
+        return "local_term_not_found"
 
 
 # --- LAYER 3: INGESTION INPUT SCHEMA ---
